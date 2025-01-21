@@ -18,8 +18,8 @@ This project is a web scraper built using Puppeteer and Puppeteer Extra with the
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/ademchaoua/wallet-scrapper
-   cd wallet-scrapper
+   git clone https://github.com/ademchaoua/WalletScrapper
+   cd WalletScrapper
    ```
 
 2. **Install the required dependencies:**
