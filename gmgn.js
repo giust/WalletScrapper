@@ -31,7 +31,7 @@ async function main() {
     console.log("Processing coins...");
     let smarts = [];
 
-    for (const coinAddress of data) {
+    for (const coinAddress of data.slice(0, 3)) {
       const page2 = await browser.newPage();
 
       try {
@@ -46,7 +46,7 @@ async function main() {
             .then((json) =>
               json.data.map((item) => ({
                 address: item.address,
-				solAddress: item.native_transfer.from_address,
+                solAddress: item.native_transfer.from_address,
                 profit: item.realized_profit,
                 timestamp: item.created_at,
               }))
