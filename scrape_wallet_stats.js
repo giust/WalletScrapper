@@ -65,8 +65,14 @@ async function scrapeAddressData(browser, address) {
       // Keep the existing Win Rate XPath as it was working
       const winRateXPath = '//div[contains(text(), "Win Rate")]/following-sibling::div[contains(text(), "%")]';
 
-      const pnlPercentage = getElementTextByXPath(pnlPercentageXPath);
-      const pnlAbsolute = getElementTextByXPath(pnlAbsoluteXPath);
+      const pnlAbsolute = getElementTextByXPath(pnlAbsoluteXPath); // Get absolute value first
+      let pnlPercentage = getElementTextByXPath(pnlPercentageXPath); // Get the parent's full text
+
+      // If pnlPercentage contains pnlAbsolute, remove pnlAbsolute from pnlPercentage
+      if (pnlPercentage && pnlAbsolute && pnlPercentage.includes(pnlAbsolute)) {
+        pnlPercentage = pnlPercentage.replace(pnlAbsolute, '').trim();
+      }
+      
       const winRate = getElementTextByXPath(winRateXPath);
 
       if (pnlPercentage === null || pnlAbsolute === null || winRate === null) {
@@ -119,10 +125,9 @@ async function main() {
     return;
   }
 
-  // Limit the number of addresses for testing to avoid long runs initially
-  const addressesToProcess = uniqueAddresses.slice(0, 5); 
-  // const addressesToProcess = uniqueAddresses; // Uncomment this line for full run after testing
-  console.log(`Processing ${addressesToProcess.length} addresses for testing.`);
+  // Process all addresses
+  const addressesToProcess = uniqueAddresses; 
+  console.log(`Processing ${addressesToProcess.length} addresses.`);
 
   const browser = await puppeteer.launch({
     headless: true, // Set to false for debugging if needed
