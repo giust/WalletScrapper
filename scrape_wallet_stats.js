@@ -13,7 +13,7 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
-        coinEntry.trades.forEach(trade => {
+        coinEntry.trades.slice(0, 30).forEach(trade => {
           if (trade.address) {
             addresses.add(trade.address);
           }
@@ -103,7 +103,7 @@ async function closeLoginModal(page, address) {
   const closeButtonXPath = '//*[@id="chakra-modal--header-:r6m:"]/div/svg'; // User provided XPath, might be dynamic
 
   try {
-    await page.waitForFunction((xpath) => !!document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, { timeout: 3000 }, modalXPath);
+    await page.waitForFunction((xpath) => !!document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, { timeout: 300 }, modalXPath);
     console.log(`Login modal detected for address ${address}. Attempting to close...`);
 
     const clicked = await page.evaluate((xpath) => {
@@ -157,7 +157,7 @@ async function scrapeAddressData(browser, address) {
 
           if (clickSuccess) {
             console.log(`Clicked ${timeframe.displayName} button. Waiting for content to update...`);
-            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 5000)));
+            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10)));
           } else {
             console.warn(`Button for ${timeframe.displayName} not found. Skipping.`);
             successThisTimeframe = false;
@@ -236,7 +236,7 @@ async function main() {
   });
 
   //const addressesToProcess = uniqueAddresses.slice(0, 3); // For testing
-  const addressesToProcess = uniqueAddresses; 
+  const addressesToProcess = uniqueAddresses;
   console.log(`Processing ${addressesToProcess.length} addresses.`);
 
   for (const address of addressesToProcess) {
