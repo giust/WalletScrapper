@@ -59,11 +59,12 @@ async function scrapeAddressData(browser, address) {
         }
       };
 
-      // XPath selectors based on the provided image and common structure
-      const pnlPercentageXPath = '//div[contains(text(), "7D Realized PnL")]/following-sibling::div/span[contains(text(), "%") and not(contains(text(), "$"))]'; // Ensure it's the percentage, not part of the absolute value if $ is also in a span
-      const pnlAbsoluteXPath = '//div[contains(text(), "7D Realized PnL")]/following-sibling::div/span[contains(text(), "$")]';
+      // XPath selectors provided by the user
+      const pnlPercentageXPath = '//*[@id="GlobalScrollDomId"]/div/div[1]/div[2]/div[2]/div[1]/div[1]/div[1]/div[2]';
+      const pnlAbsoluteXPath = '//*[@id="GlobalScrollDomId"]/div/div[1]/div[2]/div[2]/div[1]/div[1]/div[1]/div[2]/div';
+      // Keep the existing Win Rate XPath as it was working
       const winRateXPath = '//div[contains(text(), "Win Rate")]/following-sibling::div[contains(text(), "%")]';
-      
+
       const pnlPercentage = getElementTextByXPath(pnlPercentageXPath);
       const pnlAbsolute = getElementTextByXPath(pnlAbsoluteXPath);
       const winRate = getElementTextByXPath(winRateXPath);
@@ -73,11 +74,11 @@ async function scrapeAddressData(browser, address) {
         let pnlText = "N/A";
         let winRateText = "N/A";
         try {
-            const pnlContainer = document.evaluate('//div[contains(text(), "7D Realized PnL")]/following-sibling::div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (pnlContainer) pnlText = pnlContainer.innerText;
-            const winRateContainer = document.evaluate('//div[contains(text(), "Win Rate")]/following-sibling::div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (winRateContainer) winRateText = winRateContainer.innerText;
-        } catch(e) { /* ignore */ }
+          const pnlContainer = document.evaluate('//div[contains(text(), "7D Realized PnL")]/following-sibling::div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          if (pnlContainer) pnlText = pnlContainer.innerText;
+          const winRateContainer = document.evaluate('//div[contains(text(), "Win Rate")]/following-sibling::div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          if (winRateContainer) winRateText = winRateContainer.innerText;
+        } catch (e) { /* ignore */ }
         console.warn(`Could not find all expected data elements for address ${currentAddress}. PnL section text: "${pnlText}". Win Rate section text: "${winRateText}". Check selectors or page content if values are "N/A".`);
       }
 
@@ -119,9 +120,9 @@ async function main() {
   }
 
   // Limit the number of addresses for testing to avoid long runs initially
-  // const addressesToProcess = uniqueAddresses.slice(0, 5); 
-  const addressesToProcess = uniqueAddresses; // Process all addresses
-  console.log(`Processing ${addressesToProcess.length} addresses.`);
+  const addressesToProcess = uniqueAddresses.slice(0, 5); 
+  // const addressesToProcess = uniqueAddresses; // Uncomment this line for full run after testing
+  console.log(`Processing ${addressesToProcess.length} addresses for testing.`);
 
   const browser = await puppeteer.launch({
     headless: true, // Set to false for debugging if needed
