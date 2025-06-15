@@ -4,8 +4,8 @@ import fs from "fs";
 
 puppeteer.use(StealthPlugin());
 
-const SCRAPE_TIMEOUT_MS = 6000; // Configurable timeout in milliseconds
-const CONCURRENCY_LIMIT = 5; // Number of addresses to process in parallel
+const SCRAPE_TIMEOUT_MS = 10000; // Configurable timeout in milliseconds
+const CONCURRENCY_LIMIT = 2; // Number of addresses to process in parallel
 
 // Function to extract addresses from smarts_data.json
 function getUniqueAddresses() {
@@ -16,7 +16,7 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
-        coinEntry.trades.slice(0, 200).forEach(trade => {
+        coinEntry.trades.slice(0, 100).forEach(trade => {
           if (trade.address) {
             addresses.add(trade.address);
           }
