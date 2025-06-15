@@ -13,7 +13,7 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
-        coinEntry.trades.slice(0, 30).forEach(trade => {
+        coinEntry.trades.slice(0, 200).forEach(trade => {
           if (trade.address) {
             addresses.add(trade.address);
           }

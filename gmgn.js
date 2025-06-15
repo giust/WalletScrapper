@@ -31,7 +31,7 @@ async function main() {
     console.log("Processing coins...");
     let smarts = [];
 
-    for (const coinAddress of data.slice(0, 30)) {
+    for (const coinAddress of data) {
       const page2 = await browser.newPage();
 
       try {
