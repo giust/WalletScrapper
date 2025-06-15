@@ -4,7 +4,7 @@ import fs from "fs";
 
 puppeteer.use(StealthPlugin());
 
-const SCRAPE_TIMEOUT_MS = 10000; // Configurable timeout in milliseconds
+const SCRAPE_TIMEOUT_MS = 4000; // Configurable timeout in milliseconds
 const CONCURRENCY_LIMIT = 2; // Number of addresses to process in parallel
 
 // Function to extract addresses from smarts_data.json
@@ -16,6 +16,7 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
+        // Using the slice from the user's provided file content
         coinEntry.trades.slice(0, 100).forEach(trade => {
           if (trade.address) {
             addresses.add(trade.address);
@@ -139,7 +140,7 @@ async function closeLoginModal(page, address) {
 }
 
 export async function scrapeAddressData(browser, address) {
-  let page; // Define page here to ensure it's in scope for finally block
+  let page;
   try {
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
@@ -165,7 +166,7 @@ export async function scrapeAddressData(browser, address) {
       let successThisTimeframe = true;
       if (timeframe.buttonXPath) {
         try {
-          await page.waitForFunction((xpath) => !!document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, { timeout: 10000 }, timeframe.buttonXPath);
+          // Buttons are loaded instantly, no specific wait for button itself
           const clickSuccess = await page.evaluate((xpath) => {
             const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
             if (element) { element.click(); return true; }
@@ -173,10 +174,10 @@ export async function scrapeAddressData(browser, address) {
           }, timeframe.buttonXPath);
 
           if (clickSuccess) {
-            console.log(`Clicked ${timeframe.displayName} button. Waiting for content to update...`);
-            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10)));
+            console.log(`Clicked ${timeframe.displayName} button.`);
+            // No explicit wait after click as per user's new information
           } else {
-            console.warn(`Button for ${timeframe.displayName} not found. Skipping.`);
+            console.warn(`Button for ${timeframe.displayName} not found or not clickable. Skipping.`);
             successThisTimeframe = false;
           }
         } catch (e) {
@@ -234,21 +235,23 @@ async function runWithConcurrency(concurrencyLimit, browser, addresses, existing
   for (const address of addresses) {
     const task = async () => {
       processedCount++;
-      console.log(`\nProcessing address ${processedCount} of ${totalAddresses}: ${address}`);
+      // Progress bar logic moved here
+      const progress = Math.round((processedCount / totalAddresses) * 100);
+      process.stdout.write(`Processing address ${processedCount} of ${totalAddresses} (${progress}%): ${address} \r`);
 
       const existingRecord = existingDataMap.get(address);
       if (existingRecord && existingRecord.timestamp) {
         const lastScrapedTime = new Date(existingRecord.timestamp).getTime();
         if ((Date.now() - lastScrapedTime) < twentyFourHoursInMs) {
-          console.log(`Address ${address} was scraped less than 24 hours ago. Skipping.`);
-          existingDataMap.delete(address); // So it's not added again later
+          console.log(`\nAddress ${address} was scraped less than 24 hours ago. Skipping.`);
+          existingDataMap.delete(address);
           return existingRecord;
         } else {
-          console.log(`Address ${address} was scraped more than 24 hours ago. Re-scraping.`);
+          console.log(`\nAddress ${address} was scraped more than 24 hours ago. Re-scraping.`);
           existingDataMap.delete(address);
         }
       } else {
-        console.log(`Address ${address} not found in existing data or no timestamp. Scraping.`);
+        console.log(`\nAddress ${address} not found in existing data or no timestamp. Scraping.`);
       }
       return scrapeAddressData(browser, address);
     };
@@ -299,17 +302,17 @@ async function main() {
   });
 
   const addressesToProcess = uniqueAddresses;
-  // const addressesToProcess = uniqueAddresses.slice(0, 3); // For testing
   console.log(`Processing ${addressesToProcess.length} addresses with concurrency ${CONCURRENCY_LIMIT}.`);
 
   const scrapedResults = await runWithConcurrency(CONCURRENCY_LIMIT, browser, addressesToProcess, existingDataMap, twentyFourHoursInMs);
 
-  const finalDataArray = [...scrapedResults];
-  // Add back any records from existingDataMap that were not processed (e.g. if addressesToProcess was sliced for testing)
-  // This logic is now handled by runWithConcurrency returning existingRecord if skipped.
-  // existingDataMap.forEach(value => finalDataArray.push(value)); 
+  process.stdout.write("\n"); // New line after progress bar finishes
 
-  fs.writeFileSync(dataFilePath, JSON.stringify(finalDataArray.filter(item => item !== undefined), null, 2)); // Filter out undefined if any task failed before returning
+  const finalDataArray = [...scrapedResults];
+
+  existingDataMap.forEach(value => finalDataArray.push(value));
+
+  fs.writeFileSync(dataFilePath, JSON.stringify(finalDataArray.filter(item => item !== undefined), null, 2));
   console.log(`\nScraping complete. Data saved to ${dataFilePath}`);
 
   await browser.close();
