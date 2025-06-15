@@ -4,6 +4,8 @@ import fs from "fs";
 
 puppeteer.use(StealthPlugin());
 
+const SCRAPE_TIMEOUT_MS = 60000; // Configurable timeout in milliseconds
+
 // Function to extract addresses from smarts_data.json
 function getUniqueAddresses() {
   try {
@@ -13,7 +15,8 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
-        coinEntry.trades.slice(0, 200).forEach(trade => {
+        // The user's file content shows a slice(0, 200) here. I'll keep it for now.
+        coinEntry.trades.slice(0, 200).forEach(trade => { 
           if (trade.address) {
             addresses.add(trade.address);
           }
@@ -103,28 +106,44 @@ async function closeLoginModal(page, address) {
   const closeButtonXPath = '//*[@id="chakra-modal--header-:r6m:"]/div/svg'; // User provided XPath, might be dynamic
 
   try {
-    await page.waitForFunction((xpath) => !!document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, { timeout: 300 }, modalXPath);
-    console.log(`Login modal detected for address ${address}. Attempting to close...`);
+    // Non-blocking check for modal
+    const modalHandle = await page.evaluateHandle((xpath) => 
+        document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, 
+        modalXPath
+    );
+    const modalElement = await modalHandle.asElement();
 
-    const clicked = await page.evaluate((xpath) => {
-      const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-      if (element) { element.click(); return true; }
-      return false;
-    }, closeButtonXPath);
+    if (modalElement) {
+        console.log(`Login modal detected for address ${address}. Attempting to close...`);
+        const clicked = await page.evaluate((xpath) => {
+            const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            if (element) { element.click(); return true; }
+            return false;
+        }, closeButtonXPath);
 
-    if (clicked) {
-      console.log(`Clicked modal close button using XPath: ${closeButtonXPath}.`);
-      await page.waitForFunction((xpath) => !document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, { timeout: 5000 }, modalXPath);
-      console.log(`Login modal closed for address ${address}.`);
+        if (clicked) {
+            console.log(`Clicked modal close button using XPath: ${closeButtonXPath}.`);
+            // Wait for modal to disappear
+            await page.waitForFunction(
+                (xpath) => !document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue,
+                { timeout: 5000 }, // Shorter timeout as we expect it to close
+                modalXPath
+            );
+            console.log(`Login modal closed for address ${address}.`);
+        } else {
+            console.warn(`Modal close button not found or clickable using XPath: ${closeButtonXPath}. Modal might still be open.`);
+        }
     } else {
-      console.warn(`Modal close button not found or clickable using XPath: ${closeButtonXPath}.`);
+        // console.log(`Login modal not detected for address ${address}.`); // Optional: log if not found
     }
+    await modalHandle.dispose();
   } catch (error) {
-    console.log(`Login modal not detected or error during close attempt for address ${address}: ${error.message}`);
+    // This catch is for errors during the check/close process itself, not for modal not being found initially.
+    console.log(`Error during login modal check/close for address ${address}: ${error.message}`);
   }
 }
 
-async function scrapeAddressData(browser, address) {
+export async function scrapeAddressData(browser, address) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
@@ -139,9 +158,11 @@ async function scrapeAddressData(browser, address) {
   try {
     const url = `https://gmgn.ai/sol/address/${address}`;
     console.log(`Navigating to ${url}`);
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 90000 });
-    await closeLoginModal(page, address);
-    await page.waitForFunction('document.body && document.body.innerText.includes("7D Realized PnL") && document.body.innerText.includes("Win Rate")', { timeout: 60000 });
+    await page.goto(url, { waitUntil: "networkidle2", timeout: SCRAPE_TIMEOUT_MS });
+    
+    await closeLoginModal(page, address); // Attempt to close modal
+
+    await page.waitForFunction('document.body && document.body.innerText.includes("7D Realized PnL") && document.body.innerText.includes("Win Rate")', { timeout: SCRAPE_TIMEOUT_MS });
 
     for (const timeframe of timeframes) {
       console.log(`Processing ${timeframe.displayName} data for address: ${address}`);
@@ -157,7 +178,7 @@ async function scrapeAddressData(browser, address) {
 
           if (clickSuccess) {
             console.log(`Clicked ${timeframe.displayName} button. Waiting for content to update...`);
-            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10)));
+            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10))); // Reduced wait time to 10ms as requested
           } else {
             console.warn(`Button for ${timeframe.displayName} not found. Skipping.`);
             successThisTimeframe = false;
@@ -177,16 +198,16 @@ async function scrapeAddressData(browser, address) {
           successThisTimeframe = false;
         }
       }
-
+      
       if (successThisTimeframe && metrics) {
         for (const metricKey in metrics) {
           allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = metrics[metricKey];
         }
         console.log(`Successfully scraped ${timeframe.displayName} data.`);
       } else {
-        const metricKeys = Object.keys(await extractMetricsFromPage(page, address)); // Get keys for N/A
+        const metricKeys = Object.keys(await extractMetricsFromPage(page, address)); 
         for (const metricKey of metricKeys) {
-          allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = "N/A (Error)";
+            allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = "N/A (Error)";
         }
         console.warn(`Failed to scrape ${timeframe.displayName} data. Populating with N/A.`);
       }
@@ -199,10 +220,10 @@ async function scrapeAddressData(browser, address) {
     allTimeframeData.error = error.message;
   } finally {
     if (page && !page.isClosed()) {
-      await page.close();
+       await page.close();
     }
   }
-  allTimeframeData.timestamp = new Date().toISOString(); // Add timestamp here
+  allTimeframeData.timestamp = new Date().toISOString();
   return allTimeframeData;
 }
 
@@ -218,16 +239,18 @@ async function main() {
   try {
     if (fs.existsSync(dataFilePath)) {
       const fileContent = fs.readFileSync(dataFilePath, "utf8");
-      existingDataArray = JSON.parse(fileContent);
-      if (!Array.isArray(existingDataArray)) existingDataArray = [];
+      if (fileContent.trim() !== "") {
+        existingDataArray = JSON.parse(fileContent);
+        if (!Array.isArray(existingDataArray)) existingDataArray = [];
+      }
     }
   } catch (e) {
-    console.warn("Could not read or parse existing scraped_wallet_data.json. Starting fresh.", e.message);
+    console.warn(`Could not read or parse existing ${dataFilePath}. Starting fresh. Error: ${e.message}`);
     existingDataArray = [];
   }
 
   const existingDataMap = new Map(existingDataArray.map(item => [item.address, item]));
-  const newDataArray = [];
+  const finalDataArray = [];
   const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
 
   const browser = await puppeteer.launch({
@@ -235,33 +258,45 @@ async function main() {
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--window-size=1280,800"],
   });
 
-  //const addressesToProcess = uniqueAddresses.slice(0, 3); // For testing
   const addressesToProcess = uniqueAddresses;
   console.log(`Processing ${addressesToProcess.length} addresses.`);
+  
+  let processedCount = 0;
+  const totalAddresses = addressesToProcess.length;
 
   for (const address of addressesToProcess) {
+    processedCount++;
+    console.log(`\nProcessing address ${processedCount} of ${totalAddresses}: ${address}`);
+    
     const existingRecord = existingDataMap.get(address);
     if (existingRecord && existingRecord.timestamp) {
       const lastScrapedTime = new Date(existingRecord.timestamp).getTime();
       if ((Date.now() - lastScrapedTime) < twentyFourHoursInMs) {
         console.log(`Address ${address} was scraped less than 24 hours ago. Skipping.`);
-        newDataArray.push(existingRecord); // Keep existing record
+        finalDataArray.push(existingRecord);
+        existingDataMap.delete(address); 
         continue;
       } else {
         console.log(`Address ${address} was scraped more than 24 hours ago. Re-scraping.`);
+        existingDataMap.delete(address);
       }
     } else {
       console.log(`Address ${address} not found in existing data or no timestamp. Scraping.`);
     }
 
-    const data = await scrapeAddressData(browser, address);
-    newDataArray.push(data);
-    // Optional delay
-    // await new Promise(resolve => setTimeout(resolve, 1000)); 
+    try {
+      const scrapedData = await scrapeAddressData(browser, address);
+      finalDataArray.push(scrapedData);
+    } catch (scrapeError) {
+      console.error(`Error scraping data for address ${address} in main: ${scrapeError.message}`);
+      finalDataArray.push({ address: address, error: `Main Scrape Error: ${scrapeError.message}`, timestamp: new Date().toISOString() });
+    }
   }
+  
+  existingDataMap.forEach(value => finalDataArray.push(value));
 
-  fs.writeFileSync(dataFilePath, JSON.stringify(newDataArray, null, 2));
-  console.log(`Scraped data saved to ${dataFilePath}`);
+  fs.writeFileSync(dataFilePath, JSON.stringify(finalDataArray, null, 2));
+  console.log(`\nScraping complete. Data saved to ${dataFilePath}`);
 
   await browser.close();
 }
