@@ -4,7 +4,8 @@ import fs from "fs";
 
 puppeteer.use(StealthPlugin());
 
-const SCRAPE_TIMEOUT_MS = 60000; // Configurable timeout in milliseconds
+const SCRAPE_TIMEOUT_MS = 6000; // Configurable timeout in milliseconds
+const CONCURRENCY_LIMIT = 5; // Number of addresses to process in parallel
 
 // Function to extract addresses from smarts_data.json
 function getUniqueAddresses() {
@@ -15,8 +16,7 @@ function getUniqueAddresses() {
 
     smartsData.forEach(coinEntry => {
       if (coinEntry.trades && Array.isArray(coinEntry.trades)) {
-        // The user's file content shows a slice(0, 200) here. I'll keep it for now.
-        coinEntry.trades.slice(0, 200).forEach(trade => { 
+        coinEntry.trades.slice(0, 200).forEach(trade => {
           if (trade.address) {
             addresses.add(trade.address);
           }
@@ -103,64 +103,60 @@ async function extractMetricsFromPage(page, currentAddressForLog) {
 
 async function closeLoginModal(page, address) {
   const modalXPath = '//div[contains(@class, "ant-modal-content") and .//text()="Log In"]';
-  const closeButtonXPath = '//*[@id="chakra-modal--header-:r6m:"]/div/svg'; // User provided XPath, might be dynamic
+  const closeButtonXPath = '//*[@id="chakra-modal--header-:r6m:"]/div/svg';
 
   try {
-    // Non-blocking check for modal
-    const modalHandle = await page.evaluateHandle((xpath) => 
-        document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue, 
-        modalXPath
+    const modalHandle = await page.evaluateHandle((xpath) =>
+      document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue,
+      modalXPath
     );
     const modalElement = await modalHandle.asElement();
 
     if (modalElement) {
-        console.log(`Login modal detected for address ${address}. Attempting to close...`);
-        const clicked = await page.evaluate((xpath) => {
-            const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (element) { element.click(); return true; }
-            return false;
-        }, closeButtonXPath);
+      console.log(`Login modal detected for address ${address}. Attempting to close...`);
+      const clicked = await page.evaluate((xpath) => {
+        const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (element) { element.click(); return true; }
+        return false;
+      }, closeButtonXPath);
 
-        if (clicked) {
-            console.log(`Clicked modal close button using XPath: ${closeButtonXPath}.`);
-            // Wait for modal to disappear
-            await page.waitForFunction(
-                (xpath) => !document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue,
-                { timeout: 5000 }, // Shorter timeout as we expect it to close
-                modalXPath
-            );
-            console.log(`Login modal closed for address ${address}.`);
-        } else {
-            console.warn(`Modal close button not found or clickable using XPath: ${closeButtonXPath}. Modal might still be open.`);
-        }
-    } else {
-        // console.log(`Login modal not detected for address ${address}.`); // Optional: log if not found
+      if (clicked) {
+        console.log(`Clicked modal close button using XPath: ${closeButtonXPath}.`);
+        await page.waitForFunction(
+          (xpath) => !document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue,
+          { timeout: 5000 },
+          modalXPath
+        );
+        console.log(`Login modal closed for address ${address}.`);
+      } else {
+        console.warn(`Modal close button not found or clickable using XPath: ${closeButtonXPath}. Modal might still be open.`);
+      }
     }
     await modalHandle.dispose();
   } catch (error) {
-    // This catch is for errors during the check/close process itself, not for modal not being found initially.
-    console.log(`Error during login modal check/close for address ${address}: ${error.message}`);
+    // console.log(`Login modal not detected or error during close attempt for address ${address}: ${error.message}`);
   }
 }
 
 export async function scrapeAddressData(browser, address) {
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
-
-  const allTimeframeData = { address: address };
-  const timeframes = [
-    { keySuffix: '_7d', buttonXPath: null, displayName: '7D (Default)' },
-    { keySuffix: '_1d', buttonXPath: '//div[text()="1d"]', displayName: '1D' },
-    { keySuffix: '_30d', buttonXPath: '//div[text()="30d"]', displayName: '30D' },
-    { keySuffix: '_all', buttonXPath: '//div[text()="All"]', displayName: 'All Time' },
-  ];
-
+  let page; // Define page here to ensure it's in scope for finally block
   try {
+    page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+
+    const allTimeframeData = { address: address };
+    const timeframes = [
+      { keySuffix: '_7d', buttonXPath: null, displayName: '7D (Default)' },
+      { keySuffix: '_1d', buttonXPath: '//div[text()="1d"]', displayName: '1D' },
+      { keySuffix: '_30d', buttonXPath: '//div[text()="30d"]', displayName: '30D' },
+      { keySuffix: '_all', buttonXPath: '//div[text()="All"]', displayName: 'All Time' },
+    ];
+
     const url = `https://gmgn.ai/sol/address/${address}`;
     console.log(`Navigating to ${url}`);
     await page.goto(url, { waitUntil: "networkidle2", timeout: SCRAPE_TIMEOUT_MS });
-    
-    await closeLoginModal(page, address); // Attempt to close modal
+
+    await closeLoginModal(page, address);
 
     await page.waitForFunction('document.body && document.body.innerText.includes("7D Realized PnL") && document.body.innerText.includes("Win Rate")', { timeout: SCRAPE_TIMEOUT_MS });
 
@@ -178,7 +174,7 @@ export async function scrapeAddressData(browser, address) {
 
           if (clickSuccess) {
             console.log(`Clicked ${timeframe.displayName} button. Waiting for content to update...`);
-            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10))); // Reduced wait time to 10ms as requested
+            await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 10)));
           } else {
             console.warn(`Button for ${timeframe.displayName} not found. Skipping.`);
             successThisTimeframe = false;
@@ -198,34 +194,79 @@ export async function scrapeAddressData(browser, address) {
           successThisTimeframe = false;
         }
       }
-      
+
       if (successThisTimeframe && metrics) {
         for (const metricKey in metrics) {
           allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = metrics[metricKey];
         }
-        console.log(`Successfully scraped ${timeframe.displayName} data.`);
+        console.log(`Successfully scraped ${timeframe.displayName} data for ${address}.`);
       } else {
-        const metricKeys = Object.keys(await extractMetricsFromPage(page, address)); 
+        const metricKeys = Object.keys(await extractMetricsFromPage(page, address));
         for (const metricKey of metricKeys) {
-            allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = "N/A (Error)";
+          allTimeframeData[`${metricKey}${timeframe.keySuffix}`] = "N/A (Error)";
         }
-        console.warn(`Failed to scrape ${timeframe.displayName} data. Populating with N/A.`);
+        console.warn(`Failed to scrape ${timeframe.displayName} data for ${address}. Populating with N/A.`);
       }
     }
+    allTimeframeData.timestamp = new Date().toISOString();
+    return allTimeframeData;
+
   } catch (error) {
     console.error(`Major error for ${address}: ${error.message}`);
     const tfSuffixes = ['_7d', '_1d', '_30d', '_all'];
     const metricKeys = ["pnlPercentage", "pnlAbsolute", "winRate", "totalPnL", "unrealizedProfits", "bal", "txs7D", "avgDuration7D", "totalCost7D", "tokenAvgCost7D", "tokenAvgRealizedProfits7D", "distOver500", "dist200To500", "dist0To200", "dist0ToMinus50", "distMinus50", "blacklist", "soldBought", "didntBuy", "buySell5Secs"];
-    tfSuffixes.forEach(suffix => metricKeys.forEach(key => { allTimeframeData[`${key}${suffix}`] = "Error (Overall)"; }));
-    allTimeframeData.error = error.message;
+    const errorData = { address: address, error: error.message, timestamp: new Date().toISOString() };
+    tfSuffixes.forEach(suffix => metricKeys.forEach(key => { errorData[`${key}${suffix}`] = "Error (Overall)"; }));
+    return errorData;
   } finally {
     if (page && !page.isClosed()) {
-       await page.close();
+      await page.close();
     }
   }
-  allTimeframeData.timestamp = new Date().toISOString();
-  return allTimeframeData;
 }
+
+async function runWithConcurrency(concurrencyLimit, browser, addresses, existingDataMap, twentyFourHoursInMs) {
+  const results = [];
+  const executing = [];
+  let processedCount = 0;
+  const totalAddresses = addresses.length;
+
+  for (const address of addresses) {
+    const task = async () => {
+      processedCount++;
+      console.log(`\nProcessing address ${processedCount} of ${totalAddresses}: ${address}`);
+
+      const existingRecord = existingDataMap.get(address);
+      if (existingRecord && existingRecord.timestamp) {
+        const lastScrapedTime = new Date(existingRecord.timestamp).getTime();
+        if ((Date.now() - lastScrapedTime) < twentyFourHoursInMs) {
+          console.log(`Address ${address} was scraped less than 24 hours ago. Skipping.`);
+          existingDataMap.delete(address); // So it's not added again later
+          return existingRecord;
+        } else {
+          console.log(`Address ${address} was scraped more than 24 hours ago. Re-scraping.`);
+          existingDataMap.delete(address);
+        }
+      } else {
+        console.log(`Address ${address} not found in existing data or no timestamp. Scraping.`);
+      }
+      return scrapeAddressData(browser, address);
+    };
+
+    const p = Promise.resolve().then(task);
+    results.push(p);
+
+    if (concurrencyLimit <= addresses.length) {
+      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+      executing.push(e);
+      if (executing.length >= concurrencyLimit) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.all(results);
+}
+
 
 async function main() {
   const uniqueAddresses = getUniqueAddresses();
@@ -250,7 +291,6 @@ async function main() {
   }
 
   const existingDataMap = new Map(existingDataArray.map(item => [item.address, item]));
-  const finalDataArray = [];
   const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
 
   const browser = await puppeteer.launch({
@@ -259,43 +299,17 @@ async function main() {
   });
 
   const addressesToProcess = uniqueAddresses;
-  console.log(`Processing ${addressesToProcess.length} addresses.`);
-  
-  let processedCount = 0;
-  const totalAddresses = addressesToProcess.length;
+  // const addressesToProcess = uniqueAddresses.slice(0, 3); // For testing
+  console.log(`Processing ${addressesToProcess.length} addresses with concurrency ${CONCURRENCY_LIMIT}.`);
 
-  for (const address of addressesToProcess) {
-    processedCount++;
-    console.log(`\nProcessing address ${processedCount} of ${totalAddresses}: ${address}`);
-    
-    const existingRecord = existingDataMap.get(address);
-    if (existingRecord && existingRecord.timestamp) {
-      const lastScrapedTime = new Date(existingRecord.timestamp).getTime();
-      if ((Date.now() - lastScrapedTime) < twentyFourHoursInMs) {
-        console.log(`Address ${address} was scraped less than 24 hours ago. Skipping.`);
-        finalDataArray.push(existingRecord);
-        existingDataMap.delete(address); 
-        continue;
-      } else {
-        console.log(`Address ${address} was scraped more than 24 hours ago. Re-scraping.`);
-        existingDataMap.delete(address);
-      }
-    } else {
-      console.log(`Address ${address} not found in existing data or no timestamp. Scraping.`);
-    }
+  const scrapedResults = await runWithConcurrency(CONCURRENCY_LIMIT, browser, addressesToProcess, existingDataMap, twentyFourHoursInMs);
 
-    try {
-      const scrapedData = await scrapeAddressData(browser, address);
-      finalDataArray.push(scrapedData);
-    } catch (scrapeError) {
-      console.error(`Error scraping data for address ${address} in main: ${scrapeError.message}`);
-      finalDataArray.push({ address: address, error: `Main Scrape Error: ${scrapeError.message}`, timestamp: new Date().toISOString() });
-    }
-  }
-  
-  existingDataMap.forEach(value => finalDataArray.push(value));
+  const finalDataArray = [...scrapedResults];
+  // Add back any records from existingDataMap that were not processed (e.g. if addressesToProcess was sliced for testing)
+  // This logic is now handled by runWithConcurrency returning existingRecord if skipped.
+  // existingDataMap.forEach(value => finalDataArray.push(value)); 
 
-  fs.writeFileSync(dataFilePath, JSON.stringify(finalDataArray, null, 2));
+  fs.writeFileSync(dataFilePath, JSON.stringify(finalDataArray.filter(item => item !== undefined), null, 2)); // Filter out undefined if any task failed before returning
   console.log(`\nScraping complete. Data saved to ${dataFilePath}`);
 
   await browser.close();
